@@ -478,24 +478,53 @@ with st.sidebar:
         st.rerun()
 
 # ============================================================================
-# HEADER PRINCIPAL
+# HEADER PRINCIPAL COM RELÓGIO AO VIVO (COMPONENT)
 # ============================================================================
 
-current_time = datetime.now().strftime("%H:%M:%S")
 current_date = datetime.now().strftime("%d/%m/%Y")
 
-st.markdown(f"""
-<div class="main-header">
+# Usamos um componente HTML dedicado para garantir que o JS execute sem bloqueios
+import streamlit.components.v1 as components
+
+header_html = f"""
+<div style="
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    padding: 20px 40px;
+    border-radius: 16px;
+    margin-bottom: 10px;
+    box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: white;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+">
     <div>
-        <h1>🍨 SAKA DELIVERY</h1>
-        <p class="subtitle">Kitchen Display System - Açaí & Delivery</p>
+        <h1 style="margin: 0; font-size: 2.5rem; font-weight: 800; letter-spacing: 2px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">🍨 SAKA DELIVERY</h1>
+        <p style="margin: 0; font-size: 1.1rem; color: rgba(255,255,255,0.9);">Kitchen Display System - Açaí & Delivery</p>
     </div>
     <div style="text-align: right;">
-        <div class="clock">{current_time}</div>
-        <div class="subtitle">{current_date}</div>
+        <div id="live-clock" style="font-size: 2.5rem; font-weight: 600; text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">--:--:--</div>
+        <div style="font-size: 1.1rem; color: rgba(255,255,255,0.9);">{current_date}</div>
     </div>
 </div>
-""", unsafe_allow_html=True)
+
+<script>
+    function updateClock() {{
+        const now = new Date();
+        const hrs = String(now.getHours()).padStart(2, '0');
+        const mins = String(now.getMinutes()).padStart(2, '0');
+        const secs = String(now.getSeconds()).padStart(2, '0');
+        document.getElementById('live-clock').innerText = hrs + ':' + mins + ':' + secs;
+    }}
+    setInterval(updateClock, 1000);
+    updateClock();
+</script>
+"""
+
+# Renderiza o header. Altura de 140px é suficiente para evitar rolagem interna no componente
+components.html(header_html, height=150)
+
 
 # ============================================================================
 # MÉTRICAS - CONTADORES DE STATUS
