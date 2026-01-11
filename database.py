@@ -4,9 +4,10 @@ Gerencia persistência de pedidos usando SQLite3
 """
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Generator
 
 # Caminho do banco de dados
 DB_PATH = Path(__file__).parent / "saka_delivery.db"
@@ -24,37 +25,40 @@ FONTE_99FOOD = "99food"
 FONTE_WHATSAPP = "whatsapp"
 
 
-def get_connection() -> sqlite3.Connection:
-    """Cria e retorna uma conexão com o banco de dados."""
+@contextmanager
+def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
+    """Context manager para conexão com o banco de dados."""
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row  # Permite acesso por nome de coluna
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
     """Inicializa o banco de dados e cria as tabelas necessárias."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source TEXT NOT NULL,
-            client_name TEXT NOT NULL,
-            description TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'novo',
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL
-        )
-    """)
-    
-    # Índice para otimizar busca por status
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)
-    """)
-    
-    conn.commit()
-    conn.close()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                client_name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'novo',
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+        """)
+
+        # Índice para otimizar busca por status
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)
+        """)
+
+        conn.commit()
 
 
 def create_order(source: str, client_name: str, description: str) -> int:
@@ -69,19 +73,18 @@ def create_order(source: str, client_name: str, description: str) -> int:
     Returns:
         ID do pedido criado
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    now = datetime.now().isoformat()
-    
-    cursor.execute("""
-        INSERT INTO orders (source, client_name, description, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (source, client_name, description, STATUS_NOVO, now, now))
-    
-    order_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        now = datetime.now().isoformat()
+
+        cursor.execute("""
+            INSERT INTO orders (source, client_name, description, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (source, client_name, description, STATUS_NOVO, now, now))
+
+        order_id = cursor.lastrowid
+        conn.commit()
     
     return order_id
 
@@ -96,39 +99,37 @@ def get_all_orders(include_finished: bool = False) -> list[dict]:
     Returns:
         Lista de dicionários com os dados dos pedidos
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    if include_finished:
-        cursor.execute("""
-            SELECT * FROM orders 
-            ORDER BY 
-                CASE status 
-                    WHEN 'novo' THEN 1 
-                    WHEN 'preparando' THEN 2 
-                    WHEN 'pronto' THEN 3 
-                    WHEN 'saiu' THEN 4 
-                    WHEN 'cancelado' THEN 5 
-                END,
-                created_at ASC
-        """)
-    else:
-        cursor.execute("""
-            SELECT * FROM orders 
-            WHERE status NOT IN ('saiu', 'cancelado')
-            ORDER BY 
-                CASE status 
-                    WHEN 'novo' THEN 1 
-                    WHEN 'preparando' THEN 2 
-                    WHEN 'pronto' THEN 3 
-                END,
-                created_at ASC
-        """)
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [dict(row) for row in rows]
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        if include_finished:
+            cursor.execute("""
+                SELECT * FROM orders
+                ORDER BY
+                    CASE status
+                        WHEN 'novo' THEN 1
+                        WHEN 'preparando' THEN 2
+                        WHEN 'pronto' THEN 3
+                        WHEN 'saiu' THEN 4
+                        WHEN 'cancelado' THEN 5
+                    END,
+                    created_at ASC
+            """)
+        else:
+            cursor.execute("""
+                SELECT * FROM orders
+                WHERE status NOT IN ('saiu', 'cancelado')
+                ORDER BY
+                    CASE status
+                        WHEN 'novo' THEN 1
+                        WHEN 'preparando' THEN 2
+                        WHEN 'pronto' THEN 3
+                    END,
+                    created_at ASC
+            """)
+
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
 
 
 def get_order_by_id(order_id: int) -> Optional[dict]:
@@ -141,14 +142,11 @@ def get_order_by_id(order_id: int) -> Optional[dict]:
     Returns:
         Dicionário com dados do pedido ou None se não encontrado
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    return dict(row) if row else None
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
 
 def update_order_status(order_id: int, new_status: str) -> bool:
@@ -167,20 +165,19 @@ def update_order_status(order_id: int, new_status: str) -> bool:
     if new_status not in valid_statuses:
         return False
     
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    now = datetime.now().isoformat()
-    
-    cursor.execute("""
-        UPDATE orders 
-        SET status = ?, updated_at = ?
-        WHERE id = ?
-    """, (new_status, now, order_id))
-    
-    success = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        now = datetime.now().isoformat()
+
+        cursor.execute("""
+            UPDATE orders
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+        """, (new_status, now, order_id))
+
+        success = cursor.rowcount > 0
+        conn.commit()
     
     return success
 
@@ -195,14 +192,11 @@ def delete_order(order_id: int) -> bool:
     Returns:
         True se o pedido foi removido, False caso contrário
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("DELETE FROM orders WHERE id = ?", (order_id,))
-    
-    success = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        success = cursor.rowcount > 0
+        conn.commit()
     
     return success
 
@@ -214,29 +208,28 @@ def get_orders_count_by_status() -> dict[str, int]:
     Returns:
         Dicionário com status como chave e contagem como valor
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT status, COUNT(*) as count 
-        FROM orders 
-        WHERE status NOT IN ('saiu', 'cancelado')
-        GROUP BY status
-    """)
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    counts = {
-        STATUS_NOVO: 0,
-        STATUS_PREPARANDO: 0,
-        STATUS_PRONTO: 0
-    }
-    
-    for row in rows:
-        counts[row['status']] = row['count']
-    
-    return counts
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT status, COUNT(*) as count
+            FROM orders
+            WHERE status NOT IN ('saiu', 'cancelado')
+            GROUP BY status
+        """)
+
+        rows = cursor.fetchall()
+
+        counts = {
+            STATUS_NOVO: 0,
+            STATUS_PREPARANDO: 0,
+            STATUS_PRONTO: 0
+        }
+
+        for row in rows:
+            counts[row['status']] = row['count']
+
+        return counts
 
 
 def clear_old_orders(hours: int = 24) -> int:
@@ -249,21 +242,19 @@ def clear_old_orders(hours: int = 24) -> int:
     Returns:
         Número de pedidos removidos
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        DELETE FROM orders 
-        WHERE status IN ('saiu', 'cancelado')
-        AND datetime(updated_at) < datetime('now', ? || ' hours')
-    """, (f"-{hours}",))
-    
-    deleted = cursor.rowcount
-    conn.commit()
-    conn.close()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            DELETE FROM orders
+            WHERE status IN ('saiu', 'cancelado')
+            AND datetime(updated_at) < datetime('now', ? || ' hours')
+        """, (f"-{hours}",))
+
+        deleted = cursor.rowcount
+        conn.commit()
     
     return deleted
 
-
-# Inicializa o banco de dados ao importar o módulo
-init_db()
+# Removed automatic init_db() call to prevent side effects on import.
+# It should be called explicitly by the application or a setup script.
